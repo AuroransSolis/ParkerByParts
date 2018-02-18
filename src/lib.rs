@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 pub struct TripFetcher {
     pub max: u64,
     pub start: (usize, usize, usize),
@@ -16,8 +18,7 @@ impl std::fmt::Display for TFError {
         match self {
             &TFError::InvalidStart => writeln!(f, "Start tuple had one or more values outside the valid range."),
             &TFError::NotActive => writeln!(f, "TripFetcher is no longer active."),
-            &TFError::EmptyReturn => writeln!(f, "Return vec is empty."),
-            _ => writeln!(f, "Got an undefined error. gg")
+            &TFError::EmptyReturn => writeln!(f, "Return vec is empty.")
         }
     }
 }
@@ -82,7 +83,6 @@ impl TripFetcher {
                 return Err(TFError::EmptyReturn);
             }
             // Deactivate fetcher if the end of the requested range is out of the range of max
-            let starts = vec![x_skip as usize, start_trips.1, start_trips.2];
             if new_trips.len() != vec_len {
                 println!("Deactivating fetcher.");
                 self.active = false;
@@ -94,6 +94,23 @@ impl TripFetcher {
             Ok(new_trips)
         }
     }
+}
+
+pub fn mt_get_trips(am_tf: &Arc<Mutex<TripFetcher>>, request_len: usize) -> Result<Vec<(u64, u64, u64)>, TFError> {
+    let mut m_fetcher = am_tf.try_lock();
+    let mut data = Vec::new();
+    if let Ok(ref mut t_fetcher) = m_fetcher {
+        if !t_fetcher.active {
+            return Err(TFError::NotActive);
+        }
+        let trips = t_fetcher.get_triplets_vec(request_len);
+        if let Err(tferr) = trips {
+            return Err(tferr);
+        }
+        data = trips.unwrap();
+    }
+    drop(m_fetcher);
+    Ok(data)
 }
 
 // Only use triplet (x, y, z) if the squared values of combinations of them are all 1 mod 24

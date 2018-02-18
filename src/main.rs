@@ -3,9 +3,10 @@ use std::thread;
 use std::sync::{Arc, Mutex};
 
 use asdfasdf::TripFetcher;
+use asdfasdf::TFError;
 
 fn main() {
-    let fetcher = TripFetcher::new(32_768, (0, 0, 0));
+    let fetcher = TripFetcher::new(100_000, (0, 0, 0));
     let fetcher = Arc::new(Mutex::new(fetcher));
     let mut threads = vec![];
     for no in 0..3 {
@@ -13,27 +14,23 @@ fn main() {
         let request_len = 1000;
         let checker = thread::spawn(move || {
             loop {
-                let mut m_fetcher = fetcher.try_lock();
-                let mut data = Vec::new();
-                match m_fetcher {
-                    Ok(ref mut t_fetcher) => {
-                        if !t_fetcher.active {
-                            break;
+                let data = asdfasdf::mt_get_trips(&fetcher, request_len);
+                match data {
+                    Ok(trips) => {
+                        for trip in trips.into_iter() {
+                            if asdfasdf::test_squares(trip) {
+                                println!("Hory shet! Solution: {:?}", trip);
+                            }
                         }
-                        let trips = t_fetcher.get_triplets_vec(request_len);
-                        if let Err(tferr) = trips {
-                            println!("{}", tferr);
-                            continue;
-                        }
-                        data = trips.unwrap();
-                        println!("Thread {} got {} trips | Start: {:?}, end: {:?}", no, data.len(), data[0], data[data.len() - 1]);
                     },
-                    _ => continue
-                }
-                drop(m_fetcher);
-                for trip in data.into_iter() {
-                    if asdfasdf::test_squares(trip) {
-                        println!("Hory shet! Solution: {:?}", trip);
+                    Err(tferr) => {
+                        match tferr {
+                            TFError::NotActive => break,
+                            _ => {
+                                println!("Error: {}", tferr);
+                                continue;
+                            }
+                        }
                     }
                 }
             }
