@@ -82,7 +82,8 @@ impl TripFetcher {
                 println!("Triggered third None return.");
                 return Err(TFError::EmptyReturn);
             }
-            // Deactivate fetcher if the end of the requested range is out of the range of max
+            // Deactivate fetcher if the return vec length is not the requested length. The only time this will happen is if
+            // there aren't enough to meet the requested length at the end of the iterators.
             if new_trips.len() != vec_len {
                 println!("Deactivating fetcher.");
                 self.active = false;
