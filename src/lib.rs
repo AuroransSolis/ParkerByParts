@@ -1,7 +1,25 @@
 pub struct TripFetcher {
     pub max: u64,
     pub start: (usize, usize, usize),
-    pub gucci: bool
+    pub active: bool
+}
+
+#[derive(Debug)]
+pub enum TFError {
+    InvalidStart,
+    NotActive,
+    EmptyReturn,
+}
+
+impl std::fmt::Display for TFError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            &TFError::InvalidStart => writeln!(f, "Start tuple had one or more values outside the valid range."),
+            &TFError::NotActive => writeln!(f, "TripFetcher is no longer active."),
+            &TFError::EmptyReturn => writeln!(f, "Return vec is empty."),
+            _ => writeln!(f, "Got an undefined error. gg")
+        }
+    }
 }
 
 impl TripFetcher {
@@ -9,22 +27,22 @@ impl TripFetcher {
         TripFetcher {
             max: max,
             start: start,
-            gucci: true
+            active: true
         }
     }
 
     //Get triplet vec
-    pub fn get_triplets_vec(&mut self, vec_len: usize) -> Option<Vec<(u64, u64, u64)>> {
+    pub fn get_triplets_vec(&mut self, vec_len: usize) -> Result<Vec<(u64, u64, u64)>, TFError> {
         let max = self.max;
         let start_trips = self.start;
         // Return None if any of the start conditions are too high
         if start_trips.0 > max as usize || start_trips.1 > max as usize || start_trips.2 > max as usize {
-            self.gucci = false;
+            self.active = false;
             println!("Triggered first None return.");
-            None
-        } else if !self.gucci {
+            Err(TFError::InvalidStart)
+        } else if !self.active {
             println!("Triggered second None return.");
-            None
+            Err(TFError::NotActive)
         } else {
             // Make vec to be returned
             let mut new_trips = Vec::new();
@@ -41,7 +59,7 @@ impl TripFetcher {
                 for y in (0..x).skip(y_skip as usize) {
                     if !iter {
                         break;
-                    }
+                       }
                     for z in (0..x - y).skip(z_skip as usize) {
                         //println!("x_num: {} | x: {}, y: {}, z: {} | Return vec len: {}", x_num, x, y, z, new_trips.len());
                         if x > 0 && y > 0 && z > 0  && y != z && all_valid((x, y, z)) && new_trips.len() < vec_len {
@@ -61,19 +79,19 @@ impl TripFetcher {
             // Even with valid inputs the return vec len can be 0 - return None if it is
             if new_trips.len() == 0 {
                 println!("Triggered third None return.");
-                return None;
+                return Err(TFError::EmptyReturn);
             }
             // Deactivate fetcher if the end of the requested range is out of the range of max
             let starts = vec![x_skip as usize, start_trips.1, start_trips.2];
             if new_trips.len() != vec_len {
                 println!("Deactivating fetcher.");
-                self.gucci = false;
+                self.active = false;
             }
             // Set new last element
             let last_elem = new_trips[new_trips.len() - 1];
             self.start = (x_skip as usize, last_elem.1 as usize, (last_elem.2 + 1) as usize);
             //println!("New start: {:?}", self.start);
-            Some(new_trips)
+            Ok(new_trips)
         }
     }
 }

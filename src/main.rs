@@ -16,11 +16,12 @@ fn main() {
                 let mut m_fetcher = fetcher.try_lock();
                 match m_fetcher {
                     Ok(ref mut t_fetcher) => {
-                        if !t_fetcher.gucci {
+                        if !t_fetcher.active {
                             break;
                         }
                         let trips = t_fetcher.get_triplets_vec(request_len);
-                        if trips.is_none() {
+                        if let Err(tferr) = trips {
+                            println!("{}", tferr);
                             continue;
                         }
                         let trips = trips.unwrap();
