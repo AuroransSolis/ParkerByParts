@@ -1,6 +1,8 @@
 [package]
-name = "asdfasdf"
+name = "ParkerByParts"
 version = "0.1.0"
 authors = ["AuroransSolis <primalucegd@gmail.com>"]
 
 [dependencies]
+log = "*"
+simplelog = "*"

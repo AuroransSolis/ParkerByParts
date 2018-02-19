@@ -1,36 +1,39 @@
-extern crate asdfasdf;
+extern crate ParkerByParts;
+
+use ParkerByParts::TripGen;
+use ParkerByParts::TGError;
+use ParkerByParts::tg_log_init;
+use ParkerByParts::log_tgerror;
+
 use std::thread;
 use std::sync::{Arc, Mutex};
 
-use asdfasdf::TripFetcher;
-use asdfasdf::TFError;
-
 fn main() {
-    let fetcher = TripFetcher::new(100_000, (0, 0, 0));
-    let fetcher = Arc::new(Mutex::new(fetcher));
+    tg_log_init();
+    let generator = TripGen::new(65_536);
+    let a_generator = Arc::new(Mutex::new(generator));
     let mut threads = vec![];
     for no in 0..3 {
-        let fetcher = Arc::clone(&fetcher);
-        let request_len = 1000;
+        let t_generator = Arc::clone(&a_generator);
+        let request_len = 512;
         let checker = thread::spawn(move || {
             loop {
-                let data = asdfasdf::mt_get_trips(&fetcher, request_len);
+                let data = ParkerByParts::mt_get_trips(&t_generator, request_len);
                 match data {
                     Ok(trips) => {
                         for trip in trips.into_iter() {
-                            if asdfasdf::test_squares(trip) {
+                            if ParkerByParts::test_squares(trip) {
                                 println!("Hory shet! Solution: {:?}", trip);
                             }
                         }
                     },
-                    Err(tferr) => {
-                        match tferr {
-                            TFError::NotActive => break,
-                            _ => {
-                                println!("Error: {}", tferr);
-                                continue;
-                            }
-                        }
+                    Err(TGError::NotActive) => {
+                        log_tgerror(no, TGError::NotActive);
+                        break;
+                    },
+                    Err(tgerr) => {
+                        log_tgerror(no, tgerr);
+                        continue;
                     }
                 }
             }
@@ -43,3 +46,16 @@ fn main() {
     }
     println!("Done.");
 }
+
+//   _____              _ _ _
+//  / ____|            | (_) |
+// | |     _ __ ___  __| |_| |_ ___
+// | |    | '__/ _ \/ _` | | __/ __|
+// | |____| | |  __/ (_| | | |_\__ \
+//  \_____|_|  \___|\__,_|_|\__|___/
+// No thanks to:
+// - MelodicStream (Special™)
+// - Oberien
+// - Repnop
+// - Flying Janitor
+// Useless gits >:v
