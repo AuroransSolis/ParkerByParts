@@ -1,16 +1,24 @@
-extern crate ParkerByParts;
+mod trips_and_tests;
+mod tcp_stuff;
 
-use ParkerByParts::TripGen;
-use ParkerByParts::TGError;
-use ParkerByParts::tg_log_init;
-use ParkerByParts::log_tgerror;
+use trips_and_tests::*;
+use tcp_stuff::*;
 
+use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write, BufReader, BufRead};
+use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver};
 use std::thread;
 use std::sync::{Arc, Mutex};
 
 fn main() {
+    //              R  u   s   t   meme
+    let address = "82.117.115.116::1337";
+    let listener = start_tcpstream(address);
+    let (sender, receiver) = mpsc::channel();
+
     tg_log_init();
-    let generator = TripGen::new(65_536);
+    let generator = TripGen::new(1_048_575);
     let a_generator = Arc::new(Mutex::new(generator));
     let mut threads = vec![];
     for no in 0..3 {
