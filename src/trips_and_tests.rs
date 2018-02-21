@@ -1,22 +1,14 @@
-#[macro_use] extern crate log;
-extern crate simplelog;
-
 use simplelog::*;
 use std::fs::File;
-
-use std::sync::{Arc, Mutex};
-
-pub struct TripGen {
-    pub max: u64,
-    pub start: (usize, usize, usize),
-    pub active: bool
-}
+use std::sync::{Arc, Mutex, Barrier, mpsc};
+use std::thread;
 
 #[derive(Debug)]
 pub enum TGError {
-    InvalidStart,
+    FailedRetrieve,
     NotActive,
     EmptyReturn,
+    CommError
 }
 
 pub fn tg_log_init() {
@@ -27,97 +19,154 @@ pub fn tg_log_init() {
     ).unwrap();
 }
 
-pub fn log_tgerror(thread: usize, error: TGError) {
+pub fn log_tgerror(error: TGError) {
     match error {
-        TGError::InvalidStart => info!("Thread {} passed invalid start tuple.", thread),
-        TGError::NotActive => error!("Thread {} attempted to use inactive triplet generator.", thread),
-        TGError::EmptyReturn => info!("Thread {} got empty return vec.", thread)
+        TGError::FailedRetrieve => info!("Failed to get data."),
+        TGError::NotActive => error!("Attempted to use inactive triplet generator."),
+        TGError::EmptyReturn => info!("Produced empty return vec."),
+        TGError::CommError => info!("Communication between threads failed.")
     }
 }
 
-impl TripGen {
-    pub fn new(max: u64) -> Self {
-        TripGen {
-            max: max,
-            start: (0, 0, 0),
+pub enum TGInst {
+    Pause,
+    Play,
+    Get(usize),
+    At
+}
+
+pub enum TGTReturn {
+    Data(Result<Vec<(u64, u64, u64)>, TGError>),
+    Done
+}
+
+pub struct TripGenMain {
+    pub s_inst: mpsc::Sender<TGInst>,
+    pub r_data: mpsc::Receiver<TGTReturn>,
+    pub at: (u64, u64, u64),
+    pub active: bool
+}
+
+impl TripGenMain {
+    pub fn new(inst_send: mpsc::Sender<TGInst>, recv_data: mpsc::Receiver<TGTReturn>) -> Self {
+        TripGenMain {
+            s_inst: inst_send,
+            r_data: recv_data,
+            at: (0, 0, 0),
             active: true
         }
     }
 
-    // 
-    pub fn get_triplets_vec(&mut self, vec_len: usize) -> Result<Vec<(u64, u64, u64)>, TGError> {
-        let max = self.max;
-        let start_trips = self.start;
-        // Return None if any of the start conditions are too high
-        if start_trips.0 > max as usize || start_trips.1 > max as usize || start_trips.2 > max as usize {
-            return Err(TGError::InvalidStart);
-        }
+    pub fn pause(&self) -> Result<bool, TGError> {
         if !self.active {
             return Err(TGError::NotActive);
         }
-        // Make vec to be returned
-        let mut new_trips = Vec::new();
-        let mut y_skip = start_trips.1;
-        let mut z_skip = start_trips.2;
-        let mut x_skip = 0;
-        let mut iter = true;
-        for x_num in (0u64..).skip(start_trips.0).take_while(|x| x * x < max) {
-            if !iter {
-                break;
-            }
-            let x = x_num * x_num;
-            x_skip = x_num;
-            for y in (0..x).skip(y_skip) {
-                if !iter {
-                    break;
-                }
-                for z in (0..x - y).skip(z_skip) {
-                    if x > 0 && y > 0 && z > 0  && y != z && all_valid((x, y, z)) && new_trips.len() < vec_len {
-                        new_trips.push((x, y, z));
-                    }
-                    if new_trips.len() == vec_len {
-                        iter = false;
-                        break;
-                    }
-                }
-                // Only skip on first iteration
-                z_skip = 0;
-            }
-            // Only skip on first iteration
-            y_skip = 0;
+        self.s_inst.send(TGInst::Pause).unwrap();
+        Ok(true)
+    }
+
+    pub fn get_data(&self, req_len: usize) -> Result<Result<Vec<(u64, u64, u64)>, TGError>, TGError> {
+        if !self.active {
+            return Err(TGError::NotActive);
         }
-        // Even with valid inputs the return vec len can be 0 - return None if it is
-        if new_trips.len() == 0 {
-            return Err(TGError::EmptyReturn);
+        self.s_inst.send(TGInst::Get(req_len)).unwrap();
+        let ret = self.r_data.recv();
+        match ret {
+            Ok(TGTReturn::Data(good_stuff)) => return Ok(good_stuff),
+            Ok(TGTReturn::Done) => return Err(TGError::NotActive),
+            Err(_) => return Err(TGError::FailedRetrieve),
         }
-        // Deactivate generator if the return vec length is not the requested length. The only time this will happen is if
-        // there aren't enough to meet the requested length at the end of the iterators.
-        if new_trips.len() != vec_len {
-            self.active = false;
+    }
+
+    pub fn progress(&self) -> Result<(u64, u64, u64), TGError> {
+        if !self.active {
+            return Err(TGError::NotActive);
         }
-        // Set new last element
-        let last_elem = new_trips[new_trips.len() - 1];
-        self.start = (x_skip as usize, last_elem.1 as usize, (last_elem.2 + 1) as usize);
-        //println!("New start: {:?}", self.start);
-        Ok(new_trips)
+        let get_prog = self.r_data.recv();
+        match get_prog {
+            Ok(TGTReturn::Data(Ok(trip))) => Ok(trip[0]),
+            Ok(TGTReturn::Data(Err(tgerr))) => Err(tgerr),
+            Ok(TGTReturn::Done) => Err(TGError::NotActive),
+            Err(_) => Err(TGError::CommError)
+        }
     }
 }
 
-pub fn mt_get_trips(am_tg: &Arc<Mutex<TripGen>>, request_len: usize) -> Result<Vec<(u64, u64, u64)>, TGError> {
-    let mut m_generator = am_tg.try_lock();
-    let mut data = Vec::new();
-    if let Ok(ref mut t_generator) = m_generator {
-        if !t_generator.active {
-            return Err(TGError::NotActive);
+lazy_static! {
+    pub static ref TG_BAR: Arc<Barrier> = Arc::new(Barrier::new(2));
+}
+
+pub struct TripGenThread {
+    r_inst: mpsc::Receiver<TGInst>,
+    s_data: mpsc::Sender<TGTReturn>,
+    max: u64,
+}
+
+impl TripGenThread {
+    pub fn new(inst_r: mpsc::Receiver<TGInst>, data_s: mpsc::Sender<TGTReturn>, max: u64) -> Self {
+        TripGenThread {
+            r_inst: inst_r,
+            s_data: data_s,
+            max: max
         }
-        let trips = t_generator.get_triplets_vec(request_len);
-        if let Err(tgerr) = trips {
-            return Err(tgerr);
-        }
-        data = trips.unwrap();
     }
-    drop(m_generator);
-    Ok(data)
+}
+
+pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
+    let tgen = thread::spawn(move || {
+        let bar = TG_BAR.clone();
+        let mut at = (0, 0, 0);
+        let mut trips: Vec<(u64, u64, u64)> = Vec::new();
+        let mut get_amt = 0;
+        let mut working = false;
+        for x in (0u64..).map(|x| x * x).take_while(|x| x * x < tgt.max) {
+            for y in 0..x {
+                for z in 0..x - y {
+                    while !working {
+                        let inst = tgt.r_inst.recv();
+                        match inst {
+                            Ok(TGInst::Pause) => {
+                                loop {
+                                    let instr = tgt.r_inst.recv();
+                                    match instr {
+                                        Ok(TGInst::Play) => break,
+                                        Ok(_) => tgt.s_data.send(TGTReturn::Data(Err(TGError::NotActive))).unwrap(),
+                                        Err(_) => log_tgerror(TGError::CommError)
+                                    }
+                                }
+                            },
+                            Ok(TGInst::Get(amt)) => {
+                                get_amt = amt;
+                                working = true;
+                            },
+                            Ok(TGInst::At) => {
+                                tgt.s_data.send(TGTReturn::Data(Ok(vec![at.clone()]))).unwrap();
+                            },
+                            _ => {}
+                        }
+                    }
+                    if working && trips.len() < get_amt && all_valid((x, y, z)) {
+                        trips.push((x, y, z));
+                    }
+                    if working && trips.len() == get_amt {
+                        let last = trips[trips.len() - 1];
+                        tgt.s_data.send(TGTReturn::Data(Ok(trips.clone()))).unwrap();
+                        trips.clear();
+                        get_amt = 0;
+                        working = false;
+                        at = ((last.0 as f64).sqrt() as u64, last.1, last.2);
+                    }
+                }
+            }
+        }
+        if working && trips.len() > 0 && trips.len() < get_amt {
+            tgt.s_data.send(TGTReturn::Data(Ok(trips.clone()))).unwrap();
+        }
+        if working && trips.len() == 0 {
+            tgt.s_data.send(TGTReturn::Data(Err(TGError::EmptyReturn))).unwrap();
+        }
+    });
+    tgen
 }
 
 // Only use triplet (x, y, z) if the squared values of combinations of them are all 1 mod 24
