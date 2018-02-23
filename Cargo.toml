@@ -6,4 +6,3 @@ authors = ["AuroransSolis <primalucegd@gmail.com>"]
 [dependencies]
 log = "*"
 simplelog = "*"
-lazy_static = "*"
