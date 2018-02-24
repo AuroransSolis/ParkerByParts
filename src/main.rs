@@ -24,12 +24,28 @@ fn main() {
     let mut m_generator = TripGenMain::new(send_inst, data_recv);
     let t_generator = TripGenThread::new(recv_inst, data_send, 10_000_000, 50_000_000);
     let tgen_handle = run(t_generator);
-    //println!("Allowing TGen to fill buffer. Waiting for: 30 seconds.");
-    //thread::sleep(std::time::Duration::from_secs(205));
-    let start = std::time::SystemTime::now();
+    let wait_time = 300;
+    println!("Allowing TGen to fill buffer. Waiting for: {} seconds.", wait_time);
+    //thread::sleep(std::time::Duration::from_secs(wait_time));
+    for _ in 0..6 {
+        thread::sleep(std::time::Duration::from_secs(30));
+        match m_generator.query_buffer_size() {
+            Ok(size) => println!("Buffer size at the end of the wait period: {}", size),
+            Err(e) => println!("Error getting buffer size: {:?}", e)
+        }
+    }
+    match m_generator.query_buffer_size() {
+        Ok(size) => println!("Buffer size at the end of the wait period: {}", size),
+        Err(e) => println!("Error getting buffer size: {:?}", e)
+    }
+    match m_generator.progress() {
+        Ok(trip) => println!("Last trip in buf at start: {:?}", trip),
+        Err(e) => println!("Error getting progress: {:?}", e)
+    }
     println!("Starting test.");
+    let start = std::time::SystemTime::now();
     let mut times = 0;
-    for _ in 0..250 {
+    for _ in 0..1000 {
         let asdf = m_generator.get_data(10_000);
         times += 1;
     }
