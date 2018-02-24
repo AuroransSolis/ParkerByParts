@@ -186,44 +186,6 @@ pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
         for x in (0u64..).map(|x| x * x).take_while(|&x| x < tgt.max) {
             for y in 0..x {
                 for z in 0..x - y {
-                    /*while !working {
-                        let inst = tgt.r_inst.recv();
-                        match inst {
-                            Ok(TGInst::Pause) => {
-                                tgt.s_data.send(TGTReturn::EmptyDone).unwrap();
-                                loop {
-                                    let instr = tgt.r_inst.recv();
-                                    match instr {
-                                        Ok(TGInst::Play) => {
-                                            tgt.s_data.send(TGTReturn::EmptyDone).unwrap();
-                                            break;
-                                        },
-                                        Ok(_) => tgt.s_data.send(TGTReturn::Data(Err(TGError::Paused))).unwrap(),
-                                        Err(_) => log_tgerror(TGError::FailedReceive)
-                                    }
-                                }
-                            },
-                            Ok(TGInst::Get(amt)) => {
-                                get_amt = amt;
-                                working = true;
-                            },
-                            Ok(TGInst::At) => {
-                                tgt.s_data.send(TGTReturn::Data(Ok(vec![at.clone()]))).unwrap();
-                            },
-                            _ => {}
-                        }
-                    }
-                    if trips.len() < get_amt && x > 0 && y > 0 && z > 0 && y != z && all_valid((x, y, z)) {
-                        trips.push((x, y, z));
-                        if trips.len() == get_amt {
-                            let last = trips[trips.len() - 1];
-                            tgt.s_data.send(TGTReturn::Data(Ok(trips.clone()))).unwrap();
-                            trips.clear();
-                            get_amt = 0;
-                            working = false;
-                            at = ((last.0 as f64).sqrt() as u64, last.1, last.2);
-                        }
-                    }*/
                     if !working {
                         if buf.len() < tgt.buf_size {
                             match tgt.r_inst.try_recv() {
