@@ -36,13 +36,16 @@ pub enum TGInst {
     Pause,
     Play,
     Get(usize),
-    At
+    At,
+    BufferedAmt
 }
 
+#[derive(Debug)]
 pub enum TGTReturn {
     Data(Result<Vec<(u64, u64, u64)>, TGError>),
     EmptyDone,
-    Done(Result<Vec<(u64, u64, u64)>, TGError>)
+    Done(Result<Vec<(u64, u64, u64)>, TGError>),
+    Info(Result<usize, TGError>)
 }
 
 pub struct TripGenMain {
@@ -79,8 +82,7 @@ impl TripGenMain {
                 self.paused = true;
                 Ok(true)
             },
-            Ok(TGTReturn::Done(_)) => unreachable!("Got Done back on pause response."),
-            Ok(TGTReturn::Data(_)) => unreachable!("Got data back on pause response."),
+            Ok(response) => unreachable!("Got unexpected response to pause request: {:?}", response),
             Err(_) => Err(TGError::FailedReceive)
         }
     }
@@ -100,8 +102,7 @@ impl TripGenMain {
                 self.paused = false;
                 Ok(true)
             },
-            Ok(TGTReturn::Done(_)) => unreachable!("Got Done back on play response."),
-            Ok(TGTReturn::Data(_)) => unreachable!("Got data back on play response."),
+            Ok(response) => unreachable!("Got unexpected response to play request: {:?}", response),
             Err(_) => Err(TGError::FailedReceive)
         }
     }
@@ -119,22 +120,18 @@ impl TripGenMain {
         match self.r_data.recv() {
             Ok(TGTReturn::Data(Ok(good_stuff))) => Ok(good_stuff),
             Ok(TGTReturn::Data(Err(_))) => Err(TGError::EmptyReturn),
-            Ok(TGTReturn::EmptyDone) => unreachable!("Got EmptyDone on data receive."),
             Ok(TGTReturn::Done(Ok(good_stuff))) => {
                 self.active = false;
                 Ok(good_stuff)
             },
-            Ok(TGTReturn::Done(Err(_))) => unreachable!("Got Data(Err) on data receive."),
-            Err(_) => Err(TGError::FailedReceive),
+            Ok(response) => unreachable!("Got unexpected response to data request: {:?}", response),
+            Err(_) => Err(TGError::FailedReceive)
         }
     }
 
-    pub fn progress(&mut self) -> Result<(u64, u64, u64), TGError> {
+    pub fn progress(&self) -> Result<(u64, u64, u64), TGError> {
         if !self.active {
             return Err(TGError::NotActive);
-        }
-        if self.paused {
-            return Err(TGError::Paused);
         }
         if let Err(_) = self.s_inst.send(TGInst::At) {
             return Err(TGError::FailedSend);
@@ -142,8 +139,21 @@ impl TripGenMain {
         match self.r_data.recv() {
             Ok(TGTReturn::Data(Ok(trip))) => Ok(trip[0]),
             Ok(TGTReturn::Data(Err(tgerr))) => Err(tgerr),
-            Ok(TGTReturn::EmptyDone) => unreachable!("Got EmptyDone on receive progress."),
-            Ok(TGTReturn::Done(_)) => unreachable!("Got Done on receive progress."),
+            Ok(response) => unreachable!("Got unexpected response to progress query: {:?}", response),
+            Err(_) => Err(TGError::FailedReceive)
+        }
+    }
+
+    pub fn query_buffer_size(&mut self) -> Result<usize, TGError> {
+        if !self.active {
+            return Err(TGError::NotActive);
+        }
+        if let Err(_) = self.s_inst.send(TGInst::BufferedAmt) {
+            return Err(TGError::FailedSend);
+        }
+        match self.r_data.recv() {
+            Ok(TGTReturn::Info(Ok(amt))) => Ok(amt),
+            Ok(response) => unreachable!("Received unexpected response to buffer size query: {:?}", response),
             Err(_) => Err(TGError::FailedReceive)
         }
     }
@@ -170,7 +180,7 @@ impl TripGenThread {
 pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
     let tgen = thread::spawn(move || {
         let mut at = (0, 0, 0);
-        let mut buf: Vec<(u64, u64, u64)> = Vec::new();
+        let mut buf: Vec<(u64, u64, u64)> = Vec::with_capacity(tgt.max as usize);
         let mut get_amt = 0;
         let mut working = false;
         for x in (0u64..).map(|x| x * x).take_while(|&x| x < tgt.max) {
@@ -216,7 +226,6 @@ pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
                     }*/
                     if !working {
                         if buf.len() < tgt.buf_size {
-                            //println!("TGen ==> Working: f | Buffer: not full | Checking for instruction.");
                             match tgt.r_inst.try_recv() {
                                 Ok(TGInst::Pause) => {
                                     tgt.s_data.send(TGTReturn::EmptyDone).unwrap();
@@ -236,9 +245,8 @@ pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
                                     get_amt = amt;
                                     working = true;
                                 },
-                                Ok(TGInst::At) => {
-                                    tgt.s_data.send(TGTReturn::Data(Ok(vec![at.clone()]))).unwrap();
-                                },
+                                Ok(TGInst::At) => tgt.s_data.send(TGTReturn::Data(Ok(vec![buf[buf.len() - 1]]))).unwrap(),
+                                Ok(TGInst::BufferedAmt) => tgt.s_data.send(TGTReturn::Info(Ok(buf.len()))).unwrap(),
                                 _ => {}
                             }
                             if x > 0 && y > 0 && z > 0 && y != z && all_valid((x, y, z)) {
@@ -253,25 +261,26 @@ pub fn run(tgt: TripGenThread) -> thread::JoinHandle<()> {
                                     get_amt = amt;
                                     working = true;
                                 },
-                                Ok(TGInst::At) => {
-                                    tgt.s_data.send(TGTReturn::Data(Ok(vec![at.clone()]))).unwrap();
-                                },
+                                Ok(TGInst::At) => tgt.s_data.send(TGTReturn::Data(Ok(vec![at.clone()]))).unwrap(),
+                                Ok(TGInst::BufferedAmt) => tgt.s_data.send(TGTReturn::Info(Ok(buf.len()))).unwrap(),
                                 _ => {}
                             }
                         }
                     }
                     if working && buf.len() > get_amt {
-                        //println!("TGen ==> Working: t | Buffer was large enough to fulfill request.");
-                        let split = buf.split_off(get_amt);
-                        let last = buf[buf.len() - 1];
-                        tgt.s_data.send(TGTReturn::Data(Ok(buf.clone()))).unwrap();
-                        buf = split;
+                        let mut ret: Vec<(u64, u64, u64)> = Vec::with_capacity(get_amt);
+                        for _ in 0..get_amt {
+                            ret.push(buf.swap_remove(0));
+                            let end = buf.len() - 1;
+                            buf.swap(0, end);
+                        }
+                        let last = ret[ret.len() - 1];
+                        tgt.s_data.send(TGTReturn::Data(Ok(ret))).unwrap();
                         get_amt = 0;
                         working = false;
                         at = ((last.0 as f64).sqrt() as u64, last.1, last.2);
                         continue;
                     } else if working && buf.len() == get_amt {
-                        //println!("TGen ==> Working: t | Buffer was the same size as the request.");
                         tgt.s_data.send(TGTReturn::Data(Ok(buf.clone()))).unwrap();
                         let last = buf[buf.len() - 1];
                         buf.clear();
